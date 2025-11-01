@@ -1,7 +1,10 @@
 //! Process management syscalls
 use crate::{
-    task::{exit_current_and_run_next, suspend_current_and_run_next},
+    task::{exit_current_and_run_next, suspend_current_and_run_next, get_current_task},
     timer::get_time_us,
+    syscall::{
+        SYSCALL_EXIT, SYSCALL_GET_TIME, SYSCALL_TRACE, SYSCALL_WRITE, SYSCALL_YIELD,
+    },
 };
 
 #[repr(C)]
@@ -39,7 +42,48 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 }
 
 // TODO: implement the syscall
-pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
-    trace!("kernel: sys_trace");
-    -1
+pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
+    match trace_request {
+        //将id视为*const u8，忽略data，返回id地址处的值。
+        0 =>  {
+            unsafe {
+                let ptr = id as *const u8;
+                let value = *ptr;
+                value as isize
+            }
+        }
+        1 => {
+            unsafe {
+                let ptr = id as *mut u8;
+                *ptr = data as u8;
+            }
+            0
+        }
+        2 => {
+            let class: usize = match id {
+                SYSCALL_WRITE => {
+                    0
+                }
+                SYSCALL_EXIT => {
+                    1
+                }
+                SYSCALL_YIELD => {
+                    2
+                }
+                SYSCALL_GET_TIME => {
+                    3
+                }
+                SYSCALL_TRACE => {
+                    4
+                }
+                _ => {
+                    panic!("Invalid syscall id {}", id);
+                }
+            };
+            get_current_task().syscall_count[class] as isize
+        }
+        _ => {
+            -1
+        }
+    }
 }

@@ -17,6 +17,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use core::cell::RefMut;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -54,6 +55,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_count: [0; 5],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -135,6 +137,14 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Get a mutable reference to the current task control block.
+    fn get_current_task(&self) -> RefMut<'_, TaskControlBlock> {
+        RefMut::map(self.inner.exclusive_access(), |inner| {
+            let current = inner.current_task;
+            &mut inner.tasks[current]
+        })
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +178,9 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Borrow the current task control block mutably.
+pub fn get_current_task() -> RefMut<'static, TaskControlBlock> {
+    TASK_MANAGER.get_current_task()
 }

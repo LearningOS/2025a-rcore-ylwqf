@@ -24,11 +24,34 @@ const SYSCALL_TRACE: usize = 410;
 mod fs;
 mod process;
 
+use crate::task::get_current_task;
 use fs::*;
 use process::*;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
+    //将当前任务的syscallcount加1
+    let class: usize = match syscall_id {
+                SYSCALL_WRITE => {
+                    0
+                }
+                SYSCALL_EXIT => {
+                    1
+                }
+                SYSCALL_YIELD => {
+                    2
+                }
+                SYSCALL_GET_TIME => {
+                    3
+                }
+                SYSCALL_TRACE => {
+                    4
+                }
+                _ => {
+                    panic!("Invalid syscall id {}", syscall_id);
+                }
+            };
+    get_current_task().syscall_count[class] += 1;
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
