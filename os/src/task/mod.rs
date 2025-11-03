@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::MemorySet;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -126,6 +127,30 @@ impl TaskManager {
         inner.tasks[inner.current_task].get_trap_cx()
     }
 
+    /// Record that the current task invoked a syscall id.
+    fn record_current_syscall(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].record_syscall(syscall_id);
+    }
+
+    /// Get how many times the current task invoked the syscall id.
+    fn current_syscall_count(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count(syscall_id)
+    }
+
+    /// Execute a closure with mutable access to current task's memory set.
+    fn with_current_memory_set<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut MemorySet) -> R,
+    {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        f(&mut inner.tasks[current].memory_set)
+    }
+
     /// Change the current 'Running' task's program break
     pub fn change_current_program_brk(&self, size: i32) -> Option<usize> {
         let mut inner = self.inner.exclusive_access();
@@ -201,4 +226,22 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Record a syscall invocation for the current task.
+pub fn record_syscall(syscall_id: usize) {
+    TASK_MANAGER.record_current_syscall(syscall_id);
+}
+
+/// Query how many times the current task has invoked a syscall id.
+pub fn syscall_count(syscall_id: usize) -> usize {
+    TASK_MANAGER.current_syscall_count(syscall_id)
+}
+
+/// Run closure with mutable access to current task's memory set.
+pub fn with_current_memory_set<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut MemorySet) -> R,
+{
+    TASK_MANAGER.with_current_memory_set(f)
 }

@@ -5,6 +5,7 @@ use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::BTreeMap;
 
 /// The task control block (TCB) of a task.
 pub struct TaskControlBlock {
@@ -28,6 +29,9 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Syscall invocation counters keyed by syscall id
+    syscall_times: BTreeMap<usize, usize>,
 }
 
 impl TaskControlBlock {
@@ -63,6 +67,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_times: BTreeMap::new(),
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -95,6 +100,17 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// Record a syscall invocation for the current task
+    pub fn record_syscall(&mut self, id: usize) {
+        let counter = self.syscall_times.entry(id).or_insert(0);
+        *counter += 1;
+    }
+
+    /// Get the number of times a syscall has been invoked by this task
+    pub fn syscall_count(&self, id: usize) -> usize {
+        self.syscall_times.get(&id).copied().unwrap_or(0)
     }
 }
 

@@ -64,7 +64,9 @@ impl MemorySet {
         );
     }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
-        map_area.map(&mut self.page_table);
+        map_area
+            .map(&mut self.page_table)
+            .expect("failed to map area during push");
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
         }
@@ -256,10 +258,71 @@ impl MemorySet {
             .iter_mut()
             .find(|area| area.vpn_range.get_start() == start.floor())
         {
-            area.append_to(&mut self.page_table, new_end.ceil());
-            true
+            area.append_to(&mut self.page_table, new_end.ceil()).is_ok()
         } else {
             false
+        }
+    }
+
+    fn range_is_free(&self, start: VirtPageNum, end: VirtPageNum) -> bool {
+        let mut vpn = start;
+        while vpn < end {
+            if let Some(pte) = self.translate(vpn) {
+                if pte.is_valid() {
+                    return false;
+                }
+            }
+            vpn.step();
+        }
+        true
+    }
+
+    fn find_area_index(&self, start: VirtPageNum, end: VirtPageNum) -> Option<usize> {
+        self.areas.iter().position(|area| {
+            area.is_mmap_area()
+                && area.vpn_range.get_start() == start
+                && area.vpn_range.get_end() == end
+        })
+    }
+
+    /// Map a new framed user area into current address space.
+    pub fn mmap(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        perm: MapPermission,
+    ) -> Result<(), ()> {
+        if !perm.contains(MapPermission::U) {
+            return Err(());
+        }
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        if start_vpn >= end_vpn {
+            return Ok(());
+        }
+        if !self.range_is_free(start_vpn, end_vpn) {
+            return Err(());
+        }
+        let mut area = MapArea::new(start_va, end_va, MapType::Framed, perm);
+        area.mark_mmap();
+        area.map(&mut self.page_table)?;
+        self.areas.push(area);
+        Ok(())
+    }
+
+    /// Unmap a previously mapped framed user area.
+    pub fn munmap(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> Result<(), ()> {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        if start_vpn >= end_vpn {
+            return Ok(());
+        }
+        if let Some(idx) = self.find_area_index(start_vpn, end_vpn) {
+            let mut area = self.areas.swap_remove(idx);
+            area.unmap(&mut self.page_table);
+            Ok(())
+        } else {
+            Err(())
         }
     }
 }
@@ -269,6 +332,7 @@ pub struct MapArea {
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,
+    is_mmap: bool,
 }
 
 impl MapArea {
@@ -285,22 +349,24 @@ impl MapArea {
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,
+            is_mmap: false,
         }
     }
-    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) -> Result<(), ()> {
         let ppn: PhysPageNum;
         match self.map_type {
             MapType::Identical => {
                 ppn = PhysPageNum(vpn.0);
             }
             MapType::Framed => {
-                let frame = frame_alloc().unwrap();
+                let frame = frame_alloc().ok_or(())?;
                 ppn = frame.ppn;
                 self.data_frames.insert(vpn, frame);
             }
         }
         let pte_flags = PTEFlags::from_bits(self.map_perm.bits).unwrap();
         page_table.map(vpn, ppn, pte_flags);
+        Ok(())
     }
     #[allow(unused)]
     pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
@@ -309,10 +375,18 @@ impl MapArea {
         }
         page_table.unmap(vpn);
     }
-    pub fn map(&mut self, page_table: &mut PageTable) {
-        for vpn in self.vpn_range {
-            self.map_one(page_table, vpn);
+    pub fn map(&mut self, page_table: &mut PageTable) -> Result<(), ()> {
+        let mut mapped: Vec<VirtPageNum> = Vec::new();
+        for vpn in VPNRange::new(self.vpn_range.get_start(), self.vpn_range.get_end()) {
+            if let Err(_) = self.map_one(page_table, vpn) {
+                for mapped_vpn in mapped.into_iter().rev() {
+                    self.unmap_one(page_table, mapped_vpn);
+                }
+                return Err(());
+            }
+            mapped.push(vpn);
         }
+        Ok(())
     }
     #[allow(unused)]
     pub fn unmap(&mut self, page_table: &mut PageTable) {
@@ -328,11 +402,23 @@ impl MapArea {
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
     #[allow(unused)]
-    pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
+    pub fn append_to(
+        &mut self,
+        page_table: &mut PageTable,
+        new_end: VirtPageNum,
+    ) -> Result<(), ()> {
+        let mut mapped: Vec<VirtPageNum> = Vec::new();
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
-            self.map_one(page_table, vpn)
+            if let Err(_) = self.map_one(page_table, vpn) {
+                for mapped_vpn in mapped.into_iter().rev() {
+                    self.unmap_one(page_table, mapped_vpn);
+                }
+                return Err(());
+            }
+            mapped.push(vpn);
         }
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
+        Ok(())
     }
     /// data: start-aligned but maybe with shorter length
     /// assume that all frames were cleared before
@@ -355,6 +441,20 @@ impl MapArea {
             }
             current_vpn.step();
         }
+    }
+}
+
+impl MapArea {
+    fn is_user_framed(&self) -> bool {
+        self.map_type == MapType::Framed && self.map_perm.contains(MapPermission::U)
+    }
+
+    fn mark_mmap(&mut self) {
+        self.is_mmap = true;
+    }
+
+    fn is_mmap_area(&self) -> bool {
+        self.is_mmap && self.is_user_framed()
     }
 }
 
