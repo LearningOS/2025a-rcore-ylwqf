@@ -1,5 +1,7 @@
 //!Implementation of [`TaskManager`]
+use super::processor::current_task;
 use super::TaskControlBlock;
+use crate::mm::MemorySet;
 use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -43,4 +45,13 @@ pub fn add_task(task: Arc<TaskControlBlock>) {
 pub fn fetch_task() -> Option<Arc<TaskControlBlock>> {
     //trace!("kernel: TaskManager::fetch_task");
     TASK_MANAGER.exclusive_access().fetch()
+}
+/// Access the memory set of the current task
+pub fn with_current_memory_set<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut MemorySet) -> R,
+{
+    let task = current_task().expect("no current task available");
+    let mut inner = task.inner_exclusive_access();
+    f(&mut inner.memory_set)
 }

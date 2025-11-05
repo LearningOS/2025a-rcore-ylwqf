@@ -2,12 +2,17 @@
 use alloc::sync::Arc;
 
 use crate::{
+    config::PAGE_SIZE,
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{
+        translated_byte_buffer, translated_refmut, translated_str, MapPermission, PTEFlags,
+        PageTable, VirtAddr,
+    },
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
+        suspend_current_and_run_next, with_current_memory_set,
     },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -67,7 +72,11 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+    trace!(
+        "kernel::pid[{}] sys_waitpid [{}]",
+        current_task().unwrap().pid.0,
+        pid
+    );
     let task = current_task().unwrap();
     // find a child process
 
@@ -110,25 +119,84 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _ts.is_null() {
+        return -1;
+    }
+
+    let now_us = get_time_us();
+    let time_val = TimeVal {
+        sec: now_us / 1_000_000,
+        usec: now_us % 1_000_000,
+    };
+    let len = core::mem::size_of::<TimeVal>();
+    let src =
+        unsafe { core::slice::from_raw_parts((&time_val as *const TimeVal) as *const u8, len) };
+    let mut written = 0;
+    // Copy into user buffer which may span multiple pages.
+    for dst in translated_byte_buffer(current_user_token(), _ts as *const u8, len) {
+        let end = written + dst.len();
+        dst.copy_from_slice(&src[written..end]);
+        written = end;
+    }
+    debug_assert_eq!(written, len);
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
+    trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
+    if start % PAGE_SIZE != 0 {
+        return -1;
+    }
+    let perm = match prot_to_permission(prot) {
+        Some(perm) => perm,
+        None => return -1,
+    };
+    let aligned_len = match align_len_up(len) {
+        Some(aligned) => aligned,
+        None => return -1,
+    };
+    if aligned_len == 0 {
+        return 0;
+    }
+    let end = match start.checked_add(aligned_len) {
+        Some(end) => end,
+        None => return -1,
+    };
+    let result = with_current_memory_set(|memory_set| {
+        memory_set.mmap(VirtAddr::from(start), VirtAddr::from(end), perm)
+    });
+    if result.is_ok() {
+        0
+    } else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel:pid[{}] sys_munmap", current_task().unwrap().pid.0);
+    if start % PAGE_SIZE != 0 {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if len % PAGE_SIZE != 0 {
+        return -1;
+    }
+    let end = match start.checked_add(len) {
+        Some(end) => end,
+        None => return -1,
+    };
+    let result = with_current_memory_set(|memory_set| {
+        memory_set.munmap(VirtAddr::from(start), VirtAddr::from(end))
+    });
+    if result.is_ok() {
+        0
+    } else {
+        -1
+    }
 }
 
 /// change data segment size
@@ -158,4 +226,67 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         current_task().unwrap().pid.0
     );
     -1
+}
+
+#[allow(dead_code)]
+fn with_user_byte<R>(addr: usize, need_write: bool, f: impl FnOnce(&mut u8) -> R) -> Option<R> {
+    let token = current_user_token();
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(addr);
+    let vpn = va.floor();
+    let pte = page_table.translate(vpn)?;
+    let flags = pte.flags();
+    if !flags.contains(PTEFlags::V) || !flags.contains(PTEFlags::U) {
+        return None;
+    }
+    if need_write {
+        if !flags.contains(PTEFlags::W) {
+            return None;
+        }
+    } else if !flags.contains(PTEFlags::R) {
+        return None;
+    }
+    let offset = va.page_offset();
+    let bytes = pte.ppn().get_bytes_array();
+    Some(f(&mut bytes[offset]))
+}
+
+#[allow(dead_code)]
+fn user_read_u8(addr: usize) -> Option<u8> {
+    with_user_byte(addr, false, |byte| *byte)
+}
+
+#[allow(dead_code)]
+fn user_write_u8(addr: usize, value: u8) -> Option<()> {
+    with_user_byte(addr, true, |byte| {
+        *byte = value;
+    })
+}
+
+fn prot_to_permission(prot: usize) -> Option<MapPermission> {
+    if prot & !0x7 != 0 {
+        return None;
+    }
+    if prot & 0x7 == 0 {
+        return None;
+    }
+    let mut perm = MapPermission::U;
+    if prot & 0x1 != 0 {
+        perm |= MapPermission::R;
+    }
+    if prot & 0x2 != 0 {
+        perm |= MapPermission::W;
+    }
+    if prot & 0x4 != 0 {
+        perm |= MapPermission::X;
+    }
+    Some(perm)
+}
+
+fn align_len_up(len: usize) -> Option<usize> {
+    if len == 0 {
+        return Some(0);
+    }
+    let pages = ((len - 1) / PAGE_SIZE).checked_add(1)?;
+    pages.checked_mul(PAGE_SIZE)
 }

@@ -6,15 +6,23 @@ use alloc::vec::Vec;
 use bitflags::*;
 
 bitflags! {
-    /// page table entry flags
+    /// Page table entry flags.
     pub struct PTEFlags: u8 {
+        /// Entry is valid.
         const V = 1 << 0;
+        /// Page is readable.
         const R = 1 << 1;
+        /// Page is writable.
         const W = 1 << 2;
+        /// Page is executable.
         const X = 1 << 3;
+        /// User mode may access.
         const U = 1 << 4;
+        /// Entry is global.
         const G = 1 << 5;
+        /// Page has been accessed.
         const A = 1 << 6;
+        /// Page has been written (dirty).
         const D = 1 << 7;
     }
 }
