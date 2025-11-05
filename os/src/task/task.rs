@@ -8,6 +8,15 @@ use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+/// Minimum priority value
+pub const MIN_PRIORITY: usize = 2;
+/// Default priority value
+pub const DEFAULT_PRIORITY: usize = 16;
+const BIG_STRIDE: usize = 1 << 20;
+
+fn pass_for_priority(prio: usize) -> usize {
+    (BIG_STRIDE / prio.max(1)).max(1)
+}
 
 /// Task control block structure
 ///
@@ -68,6 +77,15 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Scheduling stride value
+    pub stride: usize,
+
+    /// Scheduling priority
+    pub priority: usize,
+
+    /// Stride increment per scheduling
+    pub pass: usize,
 }
 
 impl TaskControlBlockInner {
@@ -102,6 +120,7 @@ impl TaskControlBlock {
         let pid_handle = pid_alloc();
         let kernel_stack = kstack_alloc();
         let kernel_stack_top = kernel_stack.get_top();
+        let priority = DEFAULT_PRIORITY;
         // push a task context which goes to trap_return to the top of kernel stack
         let task_control_block = Self {
             pid: pid_handle,
@@ -118,6 +137,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    priority,
+                    pass: pass_for_priority(priority),
                 })
             },
         };
@@ -176,6 +198,7 @@ impl TaskControlBlock {
         let pid_handle = pid_alloc();
         let kernel_stack = kstack_alloc();
         let kernel_stack_top = kernel_stack.get_top();
+        let priority = parent_inner.priority;
         let task_control_block = Arc::new(TaskControlBlock {
             pid: pid_handle,
             kernel_stack,
@@ -191,6 +214,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: parent_inner.stride,
+                    priority,
+                    pass: pass_for_priority(priority),
                 })
             },
         });
@@ -209,6 +235,33 @@ impl TaskControlBlock {
     /// get pid of process
     pub fn getpid(&self) -> usize {
         self.pid.0
+    }
+
+    /// Get current priority
+    pub fn priority(&self) -> usize {
+        self.inner_exclusive_access().priority
+    }
+
+    /// Set priority and update stride parameters
+    pub fn set_priority(&self, prio: usize) -> Option<usize> {
+        if prio < MIN_PRIORITY {
+            return None;
+        }
+        let mut inner = self.inner_exclusive_access();
+        inner.priority = prio;
+        inner.pass = pass_for_priority(prio);
+        Some(prio)
+    }
+
+    /// Get stride value snapshot
+    pub fn stride_value(&self) -> usize {
+        self.inner_exclusive_access().stride
+    }
+
+    /// Accumulate stride after scheduling
+    pub fn accumulate_stride(&self) {
+        let mut inner = self.inner_exclusive_access();
+        inner.stride = inner.stride.wrapping_add(inner.pass);
     }
 
     /// change the location of the program break. return None if failed.

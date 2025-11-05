@@ -3,29 +3,43 @@ use super::processor::current_task;
 use super::TaskControlBlock;
 use crate::mm::MemorySet;
 use crate::sync::UPSafeCell;
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use lazy_static::*;
 ///A array of `TaskControlBlock` that is thread-safe
 pub struct TaskManager {
-    ready_queue: VecDeque<Arc<TaskControlBlock>>,
+    ready_queue: Vec<Arc<TaskControlBlock>>,
 }
 
-/// A simple FIFO scheduler.
+/// Stride-based scheduler.
 impl TaskManager {
     ///Creat an empty TaskManager
     pub fn new() -> Self {
         Self {
-            ready_queue: VecDeque::new(),
+            ready_queue: Vec::new(),
         }
     }
     /// Add process back to ready queue
     pub fn add(&mut self, task: Arc<TaskControlBlock>) {
-        self.ready_queue.push_back(task);
+        self.ready_queue.push(task);
     }
-    /// Take a process out of the ready queue
+    /// Take a process out of the ready queue using stride scheduling
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+        let mut best_idx = 0;
+        let mut best_stride = self.ready_queue[0].stride_value();
+        for (idx, task) in self.ready_queue.iter().enumerate().skip(1) {
+            let stride = task.stride_value();
+            if stride < best_stride
+                || (stride == best_stride && task.getpid() < self.ready_queue[best_idx].getpid())
+            {
+                best_idx = idx;
+                best_stride = stride;
+            }
+        }
+        Some(self.ready_queue.remove(best_idx))
     }
 }
 

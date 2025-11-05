@@ -10,7 +10,7 @@ use crate::{
     },
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, with_current_memory_set,
+        suspend_current_and_run_next, with_current_memory_set, TaskControlBlock, MIN_PRIORITY,
     },
     timer::get_time_us,
 };
@@ -212,20 +212,48 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let parent = match current_task() {
+        Some(task) => task,
+        None => return -1,
+    };
+    trace!("kernel:pid[{}] sys_spawn", parent.pid.0);
+    if _path.is_null() {
+        return -1;
+    }
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    let elf_data = match get_app_data_by_name(path.as_str()) {
+        Some(data) => data,
+        None => return -1,
+    };
+    let new_task = Arc::new(TaskControlBlock::new(elf_data));
+    {
+        let mut child_inner = new_task.inner_exclusive_access();
+        child_inner.parent = Some(Arc::downgrade(&parent));
+    }
+    {
+        let mut parent_inner = parent.inner_exclusive_access();
+        parent_inner.children.push(new_task.clone());
+    }
+    let pid = new_task.getpid();
+    add_task(new_task);
+    pid as isize
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let task = match current_task() {
+        Some(task) => task,
+        None => return -1,
+    };
+    trace!("kernel:pid[{}] sys_set_priority {:?}", task.pid.0, _prio);
+    if _prio < MIN_PRIORITY as isize {
+        return -1;
+    }
+    match task.set_priority(_prio as usize) {
+        Some(new_prio) => new_prio as isize,
+        None => -1,
+    }
 }
 
 #[allow(dead_code)]

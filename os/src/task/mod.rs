@@ -26,7 +26,7 @@ use alloc::sync::Arc;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
 use switch::__switch;
-pub use task::{TaskControlBlock, TaskStatus};
+pub use task::{TaskControlBlock, TaskStatus, DEFAULT_PRIORITY, MIN_PRIORITY};
 
 pub use context::TaskContext;
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
@@ -50,6 +50,7 @@ pub fn suspend_current_and_run_next() {
     // ---- release current PCB
 
     // push back to ready queue.
+    task.accumulate_stride();
     add_task(task);
     // jump to scheduling cycle
     schedule(task_cx_ptr);
