@@ -22,7 +22,6 @@ pub struct DeadlockState {
     mutex: MutexDeadlockState,
     semaphore: SemaphoreDeadlockState,
 }
-
 impl DeadlockState {
     pub fn new() -> Self {
         Self::default()
@@ -202,37 +201,96 @@ impl SemaphoreDeadlockState {
         if self.available[sem_id] > 0 {
             return Ok(true);
         }
-        if enabled && self.detect_cycle(tid, sem_id) {
+        if enabled && self.would_deadlock(tid, sem_id) {
             return Err(());
         }
         self.waiting.insert(tid, sem_id);
         Ok(false)
     }
 
-    fn detect_cycle(&self, start_tid: usize, sem_id: usize) -> bool {
-        let mut visited = BTreeSet::new();
-        let mut stack = VecDeque::new();
-        for (holder_tid, alloc) in self.allocation.iter() {
-            if sem_id < alloc.len() && alloc[sem_id] > 0 {
-                stack.push_back(*holder_tid);
-            }
+    fn would_deadlock(&self, tid: usize, sem_id: usize) -> bool {
+        let resource_types = self.available.len();
+        if sem_id >= resource_types {
+            return false;
         }
-        while let Some(tid) = stack.pop_back() {
-            if tid == start_tid {
-                return true;
+
+        let mut tids = BTreeSet::new();
+        tids.extend(self.allocation.keys().cloned());
+        tids.extend(self.waiting.keys().cloned());
+        tids.insert(tid);
+
+        if tids.is_empty() {
+            return false;
+        }
+
+        let mut work = self.available.clone();
+
+        let mut allocation_snapshot: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for id in &tids {
+            let mut alloc_vec = vec![0; resource_types];
+            if let Some(original) = self.allocation.get(id) {
+                for (idx, &val) in original.iter().enumerate().take(resource_types) {
+                    alloc_vec[idx] = val;
+                }
             }
-            if !visited.insert(tid) {
-                continue;
-            }
-            if let Some(wait_sem) = self.waiting.get(&tid) {
-                for (holder_tid, alloc) in self.allocation.iter() {
-                    if *wait_sem < alloc.len() && alloc[*wait_sem] > 0 {
-                        stack.push_back(*holder_tid);
-                    }
+            allocation_snapshot.insert(*id, alloc_vec);
+        }
+
+        let mut request_snapshot: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for id in &tids {
+            request_snapshot.insert(*id, vec![0; resource_types]);
+        }
+        for (wait_tid, wait_sem) in self.waiting.iter() {
+            if *wait_sem < resource_types {
+                if let Some(req_vec) = request_snapshot.get_mut(wait_tid) {
+                    req_vec[*wait_sem] = req_vec[*wait_sem].saturating_add(1);
                 }
             }
         }
-        false
+        if let Some(req_vec) = request_snapshot.get_mut(&tid) {
+            req_vec[sem_id] = req_vec[sem_id].saturating_add(1);
+        }
+
+        let mut finish: BTreeMap<usize, bool> = BTreeMap::new();
+        for id in &tids {
+            let has_allocation = allocation_snapshot
+                .get(id)
+                .map(|v| v.iter().any(|&val| val > 0))
+                .unwrap_or(false);
+            let has_request = request_snapshot
+                .get(id)
+                .map(|v| v.iter().any(|&val| val > 0))
+                .unwrap_or(false);
+            finish.insert(*id, !has_allocation && !has_request);
+        }
+
+        loop {
+            let mut progressed = false;
+            for id in tids.iter() {
+                if *finish.get(id).unwrap() {
+                    continue;
+                }
+                let req_vec = &request_snapshot[id];
+                if req_vec.iter().enumerate().all(|(idx, &need)| {
+                    need == 0 || (idx < work.len() && (need as isize) <= work[idx])
+                }) {
+                    if let Some(alloc_vec) = allocation_snapshot.get(id) {
+                        for (idx, &val) in alloc_vec.iter().enumerate() {
+                            if idx < work.len() {
+                                work[idx] += val as isize;
+                            }
+                        }
+                    }
+                    finish.insert(*id, true);
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+
+        finish.values().any(|done| !done)
     }
 
     fn after_down(&mut self, tid: usize, sem_id: usize, _immediate: bool) {
