@@ -39,6 +39,13 @@ pub use processor::{
 pub use signal::SignalFlags;
 pub use task::{TaskControlBlock, TaskStatus};
 
+/// Get current thread id within the process
+pub fn current_tid() -> usize {
+    let task = current_task().unwrap();
+    let task_inner = task.inner_exclusive_access();
+    task_inner.res.as_ref().unwrap().tid()
+}
+
 /// Make current task suspended and switch to the next task
 pub fn suspend_current_and_run_next() {
     // There must be an application running.

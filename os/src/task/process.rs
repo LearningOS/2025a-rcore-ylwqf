@@ -9,11 +9,273 @@ use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
 use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefMut;
+
+#[derive(Default)]
+pub struct DeadlockState {
+    enabled: bool,
+    mutex: MutexDeadlockState,
+    semaphore: SemaphoreDeadlockState,
+}
+
+impl DeadlockState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    pub fn register_mutex(&mut self, mutex_id: usize) {
+        self.mutex.register(mutex_id);
+    }
+
+    pub fn register_semaphore(&mut self, sem_id: usize, initial: usize) {
+        self.semaphore.register(sem_id, initial);
+    }
+
+    pub fn before_mutex_lock(&mut self, tid: usize, mutex_id: usize) -> Result<(), ()> {
+        self.mutex.before_lock(self.enabled, tid, mutex_id)
+    }
+
+    pub fn after_mutex_lock(&mut self, tid: usize, mutex_id: usize) {
+        self.mutex.after_lock(tid, mutex_id);
+    }
+
+    pub fn mutex_unlock(&mut self, tid: usize, mutex_id: usize) {
+        self.mutex.unlock(tid, mutex_id);
+    }
+
+    pub fn before_semaphore_down(&mut self, tid: usize, sem_id: usize) -> Result<bool, ()> {
+        self.semaphore.before_down(self.enabled, tid, sem_id)
+    }
+
+    pub fn after_semaphore_down(&mut self, tid: usize, sem_id: usize, immediate: bool) {
+        self.semaphore.after_down(tid, sem_id, immediate);
+    }
+
+    pub fn semaphore_up(&mut self, tid: usize, sem_id: usize) {
+        self.semaphore.up(tid, sem_id);
+    }
+
+    pub fn cleanup_thread(&mut self, tid: usize) {
+        self.mutex.cleanup_thread(tid);
+        self.semaphore.cleanup_thread(tid);
+    }
+}
+
+#[derive(Default)]
+struct MutexDeadlockState {
+    owners: Vec<Option<usize>>,
+    waiting: BTreeMap<usize, usize>,
+}
+
+impl MutexDeadlockState {
+    fn ensure(&mut self, mutex_id: usize) {
+        while self.owners.len() <= mutex_id {
+            self.owners.push(None);
+        }
+    }
+
+    fn register(&mut self, mutex_id: usize) {
+        self.ensure(mutex_id);
+        if let Some(owner) = self.owners.get_mut(mutex_id) {
+            *owner = None;
+        }
+        self.waiting.retain(|_, wait_mutex| *wait_mutex != mutex_id);
+    }
+
+    fn before_lock(&mut self, enabled: bool, tid: usize, mutex_id: usize) -> Result<(), ()> {
+        self.ensure(mutex_id);
+        self.waiting.remove(&tid);
+        match self.owners[mutex_id] {
+            None => Ok(()),
+            Some(owner_tid) if owner_tid == tid => {
+                if enabled {
+                    Err(())
+                } else {
+                    self.waiting.insert(tid, mutex_id);
+                    Ok(())
+                }
+            }
+            Some(owner_tid) => {
+                if enabled && self.detect_cycle(tid, owner_tid) {
+                    Err(())
+                } else {
+                    self.waiting.insert(tid, mutex_id);
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    fn detect_cycle(&self, start_tid: usize, owner_tid: usize) -> bool {
+        let mut visited = BTreeSet::new();
+        let mut stack = VecDeque::new();
+        stack.push_back(owner_tid);
+        while let Some(tid) = stack.pop_back() {
+            if tid == start_tid {
+                return true;
+            }
+            if !visited.insert(tid) {
+                continue;
+            }
+            if let Some(wait_mutex) = self.waiting.get(&tid) {
+                if let Some(Some(next_owner)) = self.owners.get(*wait_mutex) {
+                    stack.push_back(*next_owner);
+                }
+            }
+        }
+        false
+    }
+
+    fn after_lock(&mut self, tid: usize, mutex_id: usize) {
+        self.ensure(mutex_id);
+        self.waiting.remove(&tid);
+        self.owners[mutex_id] = Some(tid);
+    }
+
+    fn unlock(&mut self, tid: usize, mutex_id: usize) {
+        if mutex_id < self.owners.len() && self.owners[mutex_id] == Some(tid) {
+            self.owners[mutex_id] = None;
+        }
+        self.waiting.remove(&tid);
+    }
+
+    fn cleanup_thread(&mut self, tid: usize) {
+        self.waiting.remove(&tid);
+        for owner in self.owners.iter_mut() {
+            if owner.map_or(false, |o| o == tid) {
+                *owner = None;
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct SemaphoreDeadlockState {
+    available: Vec<isize>,
+    allocation: BTreeMap<usize, Vec<usize>>,
+    waiting: BTreeMap<usize, usize>,
+}
+
+impl SemaphoreDeadlockState {
+    fn ensure(&mut self, sem_id: usize) {
+        let target_len = sem_id + 1;
+        if self.available.len() < target_len {
+            self.available.resize(target_len, 0);
+            for alloc in self.allocation.values_mut() {
+                alloc.resize(target_len, 0);
+            }
+        }
+    }
+
+    fn register(&mut self, sem_id: usize, initial: usize) {
+        self.ensure(sem_id);
+        if let Some(slot) = self.available.get_mut(sem_id) {
+            *slot = initial as isize;
+        }
+        for alloc in self.allocation.values_mut() {
+            alloc[sem_id] = 0;
+        }
+        self.waiting.retain(|_, wait_sem| *wait_sem != sem_id);
+    }
+
+    fn ensure_alloc_entry(&mut self, tid: usize) -> &mut Vec<usize> {
+        let len = self.available.len();
+        let entry = self.allocation.entry(tid).or_insert_with(|| vec![0; len]);
+        if entry.len() < len {
+            entry.resize(len, 0);
+        }
+        entry
+    }
+
+    fn before_down(&mut self, enabled: bool, tid: usize, sem_id: usize) -> Result<bool, ()> {
+        self.ensure(sem_id);
+        self.waiting.remove(&tid);
+        if self.available[sem_id] > 0 {
+            return Ok(true);
+        }
+        if enabled && self.detect_cycle(tid, sem_id) {
+            return Err(());
+        }
+        self.waiting.insert(tid, sem_id);
+        Ok(false)
+    }
+
+    fn detect_cycle(&self, start_tid: usize, sem_id: usize) -> bool {
+        let mut visited = BTreeSet::new();
+        let mut stack = VecDeque::new();
+        for (holder_tid, alloc) in self.allocation.iter() {
+            if sem_id < alloc.len() && alloc[sem_id] > 0 {
+                stack.push_back(*holder_tid);
+            }
+        }
+        while let Some(tid) = stack.pop_back() {
+            if tid == start_tid {
+                return true;
+            }
+            if !visited.insert(tid) {
+                continue;
+            }
+            if let Some(wait_sem) = self.waiting.get(&tid) {
+                for (holder_tid, alloc) in self.allocation.iter() {
+                    if *wait_sem < alloc.len() && alloc[*wait_sem] > 0 {
+                        stack.push_back(*holder_tid);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn after_down(&mut self, tid: usize, sem_id: usize, _immediate: bool) {
+        self.ensure(sem_id);
+        self.waiting.remove(&tid);
+        self.available[sem_id] -= 1;
+        let alloc = self.ensure_alloc_entry(tid);
+        alloc[sem_id] += 1;
+    }
+
+    fn up(&mut self, tid: usize, sem_id: usize) {
+        self.ensure(sem_id);
+        if let Some(slot) = self.available.get_mut(sem_id) {
+            *slot += 1;
+        }
+        let mut remove_entry = false;
+        if let Some(alloc) = self.allocation.get_mut(&tid) {
+            if sem_id < alloc.len() && alloc[sem_id] > 0 {
+                alloc[sem_id] -= 1;
+            }
+            if alloc.iter().all(|&c| c == 0) {
+                remove_entry = true;
+            }
+        }
+        if remove_entry {
+            self.allocation.remove(&tid);
+        }
+    }
+
+    fn cleanup_thread(&mut self, tid: usize) {
+        if let Some(alloc) = self.allocation.remove(&tid) {
+            for (sem_id, count) in alloc.into_iter().enumerate() {
+                if count > 0 {
+                    self.ensure(sem_id);
+                    if let Some(slot) = self.available.get_mut(sem_id) {
+                        *slot += count as isize;
+                    }
+                }
+            }
+        }
+        self.waiting.remove(&tid);
+    }
+}
 
 /// Process Control Block
 pub struct ProcessControlBlock {
@@ -49,6 +311,8 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// deadlock detection state
+    pub deadlock: DeadlockState,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +383,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock: DeadlockState::new(),
                 })
             },
         });
@@ -245,6 +510,7 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock: DeadlockState::new(),
                 })
             },
         });

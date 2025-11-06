@@ -239,10 +239,19 @@ impl TaskUserRes {
     pub fn ustack_top(&self) -> usize {
         ustack_bottom_from_tid(self.ustack_base, self.tid) + USER_STACK_SIZE
     }
+
+    /// thread id within process
+    pub fn tid(&self) -> usize {
+        self.tid
+    }
 }
 
 impl Drop for TaskUserRes {
     fn drop(&mut self) {
+        if let Some(process) = self.process.upgrade() {
+            let mut inner = process.inner_exclusive_access();
+            inner.deadlock.cleanup_thread(self.tid);
+        }
         self.dealloc_tid();
         self.dealloc_user_res();
     }

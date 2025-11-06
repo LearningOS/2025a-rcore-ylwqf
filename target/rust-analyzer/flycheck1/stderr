@@ -1,0 +1,35 @@
+   0.023345030s  INFO prepare_target{force=false package_id=easy-fs-fuse v0.1.0 (/home/ylw_wsl/2025a-rcore-ylwqf/easy-fs-fuse) target="easy-fs-fuse"}: cargo::core::compiler::fingerprint: fingerprint dirty for easy-fs-fuse v0.1.0 (/home/ylw_wsl/2025a-rcore-ylwqf/easy-fs-fuse)/Check { test: false }/TargetInner { name: "easy-fs-fuse", doc: true, ..: with_path("/home/ylw_wsl/2025a-rcore-ylwqf/easy-fs-fuse/src/main.rs", Edition2018) }
+   0.023406930s  INFO prepare_target{force=false package_id=easy-fs-fuse v0.1.0 (/home/ylw_wsl/2025a-rcore-ylwqf/easy-fs-fuse) target="easy-fs-fuse"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.023978881s  INFO prepare_target{force=false package_id=clap v2.34.0 target="clap"}: cargo::core::compiler::fingerprint: fingerprint dirty for clap v2.34.0/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("clap", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/clap-2.34.0/src/lib.rs", Edition2018) }
+   0.024022958s  INFO prepare_target{force=false package_id=clap v2.34.0 target="clap"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.024570934s  INFO prepare_target{force=false package_id=ansi_term v0.12.1 target="ansi_term"}: cargo::core::compiler::fingerprint: fingerprint dirty for ansi_term v0.12.1/Check { test: false }/TargetInner { ..: lib_target("ansi_term", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/ansi_term-0.12.1/src/lib.rs", Edition2015) }
+   0.024609199s  INFO prepare_target{force=false package_id=ansi_term v0.12.1 target="ansi_term"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.025390822s  INFO prepare_target{force=false package_id=atty v0.2.14 target="atty"}: cargo::core::compiler::fingerprint: fingerprint dirty for atty v0.2.14/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("atty", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/atty-0.2.14/src/lib.rs", Edition2015) }
+   0.025432941s  INFO prepare_target{force=false package_id=atty v0.2.14 target="atty"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.026434159s  INFO prepare_target{force=false package_id=strsim v0.8.0 target="strsim"}: cargo::core::compiler::fingerprint: fingerprint dirty for strsim v0.8.0/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("strsim", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/strsim-0.8.0/src/lib.rs", Edition2015) }
+   0.026474972s  INFO prepare_target{force=false package_id=strsim v0.8.0 target="strsim"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.027316735s  INFO prepare_target{force=false package_id=textwrap v0.11.0 target="textwrap"}: cargo::core::compiler::fingerprint: fingerprint dirty for textwrap v0.11.0/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("textwrap", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/textwrap-0.11.0/src/lib.rs", Edition2015) }
+   0.027360535s  INFO prepare_target{force=false package_id=textwrap v0.11.0 target="textwrap"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.028480978s  INFO prepare_target{force=false package_id=vec_map v0.8.2 target="vec_map"}: cargo::core::compiler::fingerprint: fingerprint dirty for vec_map v0.8.2/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("vec_map", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/vec_map-0.8.2/src/lib.rs", Edition2015) }
+   0.028532839s  INFO prepare_target{force=false package_id=vec_map v0.8.2 target="vec_map"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.030298903s  INFO prepare_target{force=false package_id=rand v0.8.5 target="rand"}: cargo::core::compiler::fingerprint: fingerprint dirty for rand v0.8.5/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("rand", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/rand-0.8.5/src/lib.rs", Edition2018) }
+   0.030347572s  INFO prepare_target{force=false package_id=rand v0.8.5 target="rand"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.030887413s  INFO prepare_target{force=false package_id=rand_chacha v0.3.1 target="rand_chacha"}: cargo::core::compiler::fingerprint: fingerprint dirty for rand_chacha v0.3.1/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("rand_chacha", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/rand_chacha-0.3.1/src/lib.rs", Edition2018) }
+   0.030931221s  INFO prepare_target{force=false package_id=rand_chacha v0.3.1 target="rand_chacha"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.032357915s  INFO prepare_target{force=false package_id=rand_core v0.6.4 target="rand_core"}: cargo::core::compiler::fingerprint: fingerprint dirty for rand_core v0.6.4/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("rand_core", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/rand_core-0.6.4/src/lib.rs", Edition2018) }
+   0.032495637s  INFO prepare_target{force=false package_id=rand_core v0.6.4 target="rand_core"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.032902366s  INFO prepare_target{force=false package_id=getrandom v0.2.16 target="getrandom"}: cargo::core::compiler::fingerprint: fingerprint dirty for getrandom v0.2.16/Check { test: false }/TargetInner { ..: lib_target("getrandom", ["lib"], "/home/ylw_wsl/.cargo/registry/src/mirrors.ustc.edu.cn-4affec411d11e50f/getrandom-0.2.16/src/lib.rs", Edition2018) }
+   0.032942509s  INFO prepare_target{force=false package_id=getrandom v0.2.16 target="getrandom"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+    Checking vec_map v0.8.2
+    Checking ansi_term v0.12.1
+    Checking atty v0.2.14
+    Checking strsim v0.8.0
+    Checking getrandom v0.2.16
+    Checking textwrap v0.11.0
+error: could not compile `strsim` (lib) due to 22 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `atty` (lib) due to 5 previous errors
+error: could not compile `getrandom` (lib) due to 4 previous errors
+error: could not compile `textwrap` (lib) due to 39 previous errors
+error: could not compile `ansi_term` (lib) due to 145 previous errors
+error: could not compile `vec_map` (lib) due to 131 previous errors
