@@ -379,4 +379,24 @@ impl DeadlockController {
         self.semaphore_tracker.sub_allocation(tid, res_id, 1);
         Ok(())
     }
+
+    /// Remove bookkeeping entries related to a thread that is exiting.
+    pub fn cleanup_thread(&mut self, tid: usize) {
+        if tid < self.mutex_tracker.manager.process_count() {
+            if let Some(row) = self.mutex_tracker.manager.allocation.get_mut(tid) {
+                row.fill(0);
+            }
+            if let Some(row) = self.mutex_tracker.manager.need.get_mut(tid) {
+                row.fill(0);
+            }
+        }
+        if tid < self.semaphore_tracker.manager.process_count() {
+            if let Some(row) = self.semaphore_tracker.manager.allocation.get_mut(tid) {
+                row.fill(0);
+            }
+            if let Some(row) = self.semaphore_tracker.manager.need.get_mut(tid) {
+                row.fill(0);
+            }
+        }
+    }
 }
